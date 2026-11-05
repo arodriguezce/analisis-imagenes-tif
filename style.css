@@ -1,0 +1,63 @@
+:root{
+  --green:#1b7a45;
+  --green-dark:#145a32;
+  --bg:#f5f7f6;
+  --card:#ffffff;
+  --muted:#6b7a80;
+  --border:#d8e2e0;
+  --ink:#1f2a29;
+  --accent:#4a90e2;
+}
+* { box-sizing: border-box; }
+html,body { margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--ink); line-height:1.5; }
+.app-header{ background:var(--green-dark); color:#fff; padding:1.25rem 1.5rem; }
+.app-header h1{ margin:0 0 0.25rem; font-size:1.35rem; }
+.app-header p{ margin:0 0 0.5rem; font-size:0.95rem; opacity:.95; }
+.chip{ display:inline-block; font-size:.75rem; border:1px solid rgba(255,255,255,.45); border-radius:999px; padding:.15rem .55rem; opacity:.9; }
+.container{ display:flex; max-width:1200px; margin:0 auto; padding:1rem; gap:1rem; }
+aside.sidebar{ width:300px; flex-shrink:0; }
+main.panel{ flex:1; min-width:0; }
+.tabs{ display:flex; gap:.25rem; background:#fff; border-bottom:1px solid var(--border); padding:.25rem .25rem 0; }
+.tab{ background:transparent; border:none; border-bottom:2px solid transparent; padding:.5rem .85rem; font-size:.9rem; color:var(--muted); cursor:pointer; border-radius:0; }
+.tab.active{ color:var(--green-dark); border-bottom-color:var(--green-dark); font-weight:600; }
+.tab:hover{ color:var(--green-dark); }
+.page{ display:none; animation:fade .25s ease; }
+.page.active{ display:block; }
+@keyframes fade{ from{opacity:0} to{opacity:1} }
+.card{ background:var(--card); border:1px solid var(--border); border-radius:.6rem; padding:1rem 1.15rem; margin-bottom:1rem; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+.card h3{ margin:0 0 .6rem; font-size:.95rem; color:var(--green-dark); }
+.muted{ color:var(--muted); font-size:.87rem; }
+.small{ font-size:.8rem; }
+.hint{ font-size:.78rem; color:var(--muted); margin-top:.25rem; }
+.btn{ background:var(--green); color:#fff; border:none; border-radius:.45rem; padding:.5rem .85rem; font-size:.88rem; cursor:pointer; font-weight:600; }
+.btn:hover{ background:var(--green-dark); }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
+.btn-outline{ background:#fff; color:var(--green-dark); border:1px solid var(--green-dark); }
+.btn-outline:hover{ background:#eef7f1; }
+.btn-primary{ background:var(--accent); color:#fff; }
+.btn-primary:hover{ background:#357abd; }
+.btn-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:.5rem; margin:.5rem 0; }
+.card-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1rem; }
+.toolbar{ display:flex; gap:.5rem; flex-wrap:wrap; }
+.row{ display:flex; gap:1rem; align-items:flex-start; flex-wrap:wrap; }
+.col{ flex:1; min-width:0; }
+label{ display:block; font-size:.82rem; font-weight:600; color:var(--green-dark); margin-bottom:.25rem; }
+select,input,textarea{ width:100%; padding:.45rem .6rem; border:1px solid var(--border); border-radius:.4rem; font-size:.9rem; background:#fff; }
+textarea{ resize:vertical; font-family:inherit; }
+.slider-row{ margin-top:.5rem; }
+.slider-row input[type=range]{ width:100%; cursor:pointer; }
+canvas{ max-width:100%; height:auto; background:#eee; border:1px solid var(--border); border-radius:.4rem; display:block; }
+.meta-table{ width:100%; border-collapse:collapse; font-size:.86rem; margin-bottom:1rem; }
+.meta-table td{ border-bottom:1px solid var(--border); padding:.3rem 0; vertical-align:top; }
+.meta-table td:first-child{ color:var(--muted); width:45%; }
+.rgb-controls{ display:flex; gap:.6rem; flex-wrap:wrap; margin-top:.7rem; }
+.rgb-controls > div{ display:flex; flex-direction:column; gap:.2rem; }
+.legend{ display:flex; gap:.4rem; flex-wrap:wrap; margin-top:.5rem; }
+.legend .sw{ display:inline-flex; align-items:center; gap:.35rem; font-size:.8rem; }
+.legend .sw b{ width:14px; height:14px; border-radius:2px; display:inline-block; border:1px solid rgba(0,0,0,.25); }
+.viewerWrap{ position:relative; }
+#viewerWrap{ max-width:100%; overflow:auto; border:1px solid var(--border); border-radius:.4rem; background:#fff; }
+.app-footer{ padding:1rem 1.5rem; font-size:.78rem; color:var(--muted); border-top:1px solid var(--border); background:#fff; }
+#fileInfo{ margin-top:.4rem; font-size:.85rem; color:var(--green-dark); font-weight:600; min-height:1.2rem; }
+#pdfStatus{ margin-top:.7rem; font-size:.88rem; color:var(--green-dark); font-weight:600; min-height:1.2rem; }
+@media (max-width:768px){ .container{ flex-direction:column; } aside.sidebar{ width:100%; } }
