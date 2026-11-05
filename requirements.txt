@@ -1,0 +1,6 @@
+streamlit
+numpy
+pillow
+tifffile
+matplotlib
+fpdf2

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Análisis Espectral TIFF — Índices de Vegetación, Suelos y Agua</title>
+<link rel="stylesheet" href="style.css">
+<!-- Chart.js (gráficos e histogramas) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<!-- jsPDF (generación de reporte PDF) -->
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<!-- geotiff.js (lectura de archivos TIFF del lado del cliente) -->
+<script src="https://unpkg.com/geotiff@2.0.3/bundle.min.js"></script>
+<script src="app.js"></script>
+</head>
+<body>
+
+<header class="app-header">
+  <h1>🌿 Análisis Espectral de Imágenes TIFF</h1>
+  <p>Carga una imagen TIFF multibanda, cuantifica índices espectrales, mide áreas de vegetación, suelos y fuentes hídricas, y genera un reporte PDF.</p>
+  <div class="chip">Funciona 100% en tu navegador (sin servidor)</div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab active" data-tab="visor" role="tab" aria-selected="true">🖼️ Visor de imagen</button>
+  <button class="tab" data-tab="indices" role="tab" aria-selected="false">📊 Índices espectrales</button>
+  <button class="tab" data-tab="areas" role="tab" aria-selected="false">📐 Cuantificación de áreas</button>
+  <button class="tab" data-tab="reporte" role="tab" aria-selected="false">📄 Reporte PDF</button>
+</nav>
+
+<div class="container">
+  <aside class="sidebar">
+    <div class="card">
+      <h3>1. Cargar imagen TIFF</h3>
+      <input type="file" id="fileInput" accept=".tif,.tiff">
+      <div id="fileInfo" class="muted small"></div>
+      <p class="hint">Si no tienes una, usa la imagen de demostración.</p>
+      <button class="btn btn-outline" id="btnDemo">Cargar imagen de demostración</button>
+    </div>
+
+    <div class="card">
+      <h3>2. Asignar bandas</h3>
+      <div id="bandSelects" class="muted">Carga una imagen primero.</div>
+    </div>
+
+    <div class="card">
+      <h3>3. Resolución espacial (opcional)</h3>
+      <label>Metros por píxel</label>
+      <input type="number" id="resInput" placeholder="Ej. 30 (Landsat) o 10 (Sentinel-2)">
+      <p class=hint>Déjalo vacío para ver solo píxeles y porcentajes.</p>
+    </div>
+  </aside>
+
+  <main class="panel">
+    <!-- VISOR -->
+    <section id="page-visor" class="page active">
+      <h2>Visor y compuesta RGB</h2>
+      <div class="row">
+        <div class="col">
+          <div id="viewerWrap">
+            <canvas id="viewer"></canvas>
+          </div>
+          <div class="rgb-controls">
+            <label>Rojo</label><select id="rgbR"></select>
+            <label>Verde</label><select id="rgbG"></select>
+            <label>Azul</label><select id="rgbB"></select>
+          </div>
+        </div>
+        <div class="col meta">
+          <h3>Detalle del archivo</h3>
+          <table id="metaTable" class="meta-table"></table>
+          <h3>Estadísticas por banda</h3>
+          <div id="bandStats"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ÍNDICES -->
+    <section id="page-indices" class="page">
+      <h2>Índices espectrales</h2>
+      <div class="grid btn-grid">
+        <button class="btn" onclick="app.calcIndex('NDVI')">NDVI — Vegetación</button>
+        <button class="btn" onclick="app.calcIndex('SAVI')">SAVI — Veg. ajuste suelo</button>
+        <button class="btn" onclick="app.calcIndex('EVI')">EVI — Vegetación mejorado</button>
+        <button class="btn" onclick="app.calcIndex('NDWI')">NDWI — Agua (McFeeters)</button>
+        <button class="btn" onclick="app.calcIndex('MNDWI')">MNDWI — Agua modificado</button>
+        <button class="btn" onclick="app.calcIndex('NDBI')">NDBI — Suelos / construido</button>
+      </div>
+
+      <div class="row" style="margin-top:1rem">
+        <div class="col">
+          <h3>Visualización</h3>
+          <select id="indexSelect" onchange="app.showIndex(this.value)"></select>
+          <div class="slider-row">
+            <label>Rango de color <span id="rangeVal">-1 a 1</span></label>
+            <input type="range" id="indexRange" min="-1" max="1" step="0.1" value="-1,1">
+          </div>
+          <canvas id="indexCanvas"></canvas>
+          <div class="legend" id="indexLegend"></div>
+        </div>
+        <div class="col">
+          <h3>Estadísticas</h3>
+          <div id="indexStats"></div>
+          <canvas id="indexHist" style="max-width:100%;height:220px"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- ÁREAS -->
+    <section id="page-areas" class="page">
+      <h2>Cuantificación de áreas</h2>
+      <p id="haNote" class="muted"></p>
+      <div class="grid card-grid">
+        <div class="card">
+          <h3>Vegetación (NDVI)</h3>
+          <div id="areaNDVI" class="muted">Calcula NDVI primero.</div>
+        </div>
+        <div class="card">
+          <h3>Fuentes hídricas (NDWI / MNDWI)</h3>
+          <div id="areaAGUA" class="muted">Calcula NDWI o MNDWI primero.</div>
+        </div>
+        <div class="card">
+          <h3>Suelos expuestos / construido (NDBI)</h3>
+          <div id="areaNDBI" class="muted">Calcula NDBI primero.</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:1rem">
+        <h3>Clasificación de cobertura dominante</h3>
+        <div id="areaCover" class="muted">Requiere NDVI y (NDWI/MNDWI o NDBI).</div>
+        <canvas id="coverCanvas"></canvas>
+      </div>
+
+      <div class="toolbar" style="margin-top:1rem">
+        <button class="btn btn-outline" id="btnDownloadCSV">Descargar estadísticas (CSV)</button>
+      </div>
+    </section>
+
+    <!-- REPORTE -->
+    <section id="page-reporte" class="page">
+      <h2>Generar reporte PDF</h2>
+      <p>El reporte incluye resumen ejecutivo, mapas y estadísticas de cada índice, tablas de área por clases, clasificación de cobertura y conclusiones.</p>
+      <div class="grid card-grid">
+        <div class="card">
+          <label>Resumen ejecutivo</label>
+          <textarea id="repResumen" rows="4">Análisis de imagen TIFF con cuantificación de índices espectrales: vegetación (NDVI/SAVI/EVI), fuentes hídricas (NDWI/MNDWI) y suelos expuestos/construidos (NDBI).</textarea>
+        </div>
+        <div class="card">
+          <label>Conclusiones y recomendaciones</label>
+          <textarea id="repConclusiones" rows="4">• Vegetación: evaluar el área con NDVI ≥ 0.40 como cobertura vegetal funcional.
+• Fuentes hídricas: NDWI/MNDWI ≥ 0.20 indica presencia de cuerpos de agua.
+• Suelos: NDBI ≥ 0.10 destaca áreas expuestas o construidas.
+• Se recomienda validar los umbrales con muestreo de campo.</textarea>
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:1.5rem">
+        <button class="btn btn-primary" id="btnGenPDF">Generar y descargar reporte PDF</button>
+      </div>
+      <div id="pdfStatus" class="muted small"></div>
+    </section>
+  </main>
+</div>
+
+<footer class="app-footer">
+  Métodología: índices espectrales calculados a partir de bandas de reflejo. Los umbrales de clasificación son referenciales; valídalos con datos de campo.
+</footer>
+
+</body>
+</html>
