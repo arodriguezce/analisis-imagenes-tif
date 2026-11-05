@@ -17,11 +17,16 @@ const app = (() => {
     histChart: null,
   };
 
-  const geotiff = window.geotiff;
+  const geotiff = window.geotiff || window.GeoTIFF || null;
 
   // ---------- utilidades ----------
-  const $ = (id) => document.getElementById(id);
+  const $ = (id) => {
+    const el = document.getElementById(id);
+    if (!el) console.error("Elemento no encontrado: #" + id);
+    return el;
+  };
   const escapeHtml = (t) => String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const showError = (msg) => { console.error(msg); alert("Error: " + msg); };
 
   function safeDiv(num, den) {
     const n = num.length, out = new Float32Array(n);
@@ -31,7 +36,6 @@ const app = (() => {
     }
     return out;
   }
-  // el safeDiv arriba es (n-d)/(n+d); los índices son (a-b)/(a+b). Lo redefinimos por indice abajo.
 
   function stats(arr) {
     let n = 0, sum = 0, min = Infinity, max = -Infinity;
@@ -116,61 +120,83 @@ const app = (() => {
 
   // ---------- carga de TIFF ----------
   async function loadFile(file) {
-    if (!geotiff) throw new Error("geotiff.js no cargo. Revisa tu conexion a internet.");
-    const ab = await file.arrayBuffer();
-    const tiff = await geotiff.fromArrayBuffer(ab);
-    const image = await tiff.getImage();
-    S.width = image.getWidth();
-    S.height = image.getHeight();
-    const rasters = await image.readRasters(); // Float64Array[] por banda (interleaved=false por defecto en getImage)
-    S.bands = {}; S.bandNames = [];
-    for (let i = 0; i < rasters.length; i++) {
-      const name = "Banda " + (i + 1);
-      S.bands[name] = Float32Array.from(rasters[i]);
-      S.bandNames.push(name);
+    if (!geotiff) {
+      showError("geotiff.js no cargo. Verifica tu conexion a internet (se requiere cargar librerias externas).");
+      return;
     }
-    S.assignments = {};
-    S.results = {}; S.coverage = null;
-    $("fileInfo").textContent = `Cargado: ${escapeHtml(file.name)}  |  ${S.width} x ${S.height}  |  ${S.bandNames.length} banda(s)`;
-    $("fileInfo").className = "";
-    renderBandSelects();
-    renderMeta();
-    renderBandStats();
-    switchPage("visor");
+    try {
+      const ab = await file.arrayBuffer();
+      const tiff = await geotiff.fromArrayBuffer(ab);
+      const image = await tiff.getImage();
+      S.width = image.getWidth();
+      S.height = image.getHeight();
+      const rasters = await image.readRasters();
+      // readRasters puede devolver un array o un objeto { banda: ArrayBuffer }
+      let rasterList;
+      if (Array.isArray(rasters)) {
+        rasterList = rasters;
+      } else if (rasters && typeof rasters === "object") {
+        rasterList = Object.keys(rasters).sort((a,b) => parseInt(a)-parseInt(b)).map(k => rasters[k]);
+      } else {
+        throw new Error("Formato de rasteres no reconocido al leer el TIFF.");
+      }
+      S.bands = {}; S.bandNames = [];
+      for (let i = 0; i < rasterList.length; i++) {
+        const name = "Banda " + (i + 1);
+        const arr = rasterList[i];
+        S.bands[name] = arr instanceof Float64Array ? Float32Array.from(arr) : Float32Array.from(arr);
+        S.bandNames.push(name);
+      }
+      S.assignments = {};
+      S.results = {}; S.coverage = null;
+      const fi = $("fileInfo");
+      if (fi) { fi.textContent = `Cargado: ${escapeHtml(file.name)}  |  ${S.width} x ${S.height}  |  ${S.bandNames.length} banda(s)`; fi.className = ""; }
+      renderBandSelects();
+      renderMeta();
+      renderBandStats();
+      switchPage("visor");
+    } catch (err) {
+      showError("No se pudo leer el TIFF: " + (err && err.message ? err.message : String(err)));
+    }
   }
 
   function loadDemo() {
-    const w = 240, h = 180;
-    const rng = () => (Math.random() - 0.5) * 0.04;
-    const red = new Float32Array(w * h);
-    const green = new Float32Array(w * h);
-    const nir = new Float32Array(w * h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x;
-        let r, g, n;
-        if (y < 60) { r = 0.45; g = 0.30; n = 0.35; }      // suelo
-        else if (y < 120) { r = 0.12; g = 0.35; n = 0.75; } // vegetacion
-        else { r = 0.05; g = 0.08; n = 0.02; }              // agua
-        red[i] = Math.min(1, Math.max(0, r + rng()));
-        green[i] = Math.min(1, Math.max(0, g + rng()));
-        nir[i] = Math.min(1, Math.max(0, n + rng()));
+    try {
+      const w = 240, h = 180;
+      const rng = () => (Math.random() - 0.5) * 0.04;
+      const red = new Float32Array(w * h);
+      const green = new Float32Array(w * h);
+      const nir = new Float32Array(w * h);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          let r, g, n;
+          if (y < 60) { r = 0.45; g = 0.30; n = 0.35; }      // suelo
+          else if (y < 120) { r = 0.12; g = 0.35; n = 0.75; } // vegetacion
+          else { r = 0.05; g = 0.08; n = 0.02; }              // agua
+          red[i] = Math.min(1, Math.max(0, r + rng()));
+          green[i] = Math.min(1, Math.max(0, g + rng()));
+          nir[i] = Math.min(1, Math.max(0, n + rng()));
+        }
       }
+      S.width = w; S.height = h;
+      S.bands = { "Banda 1": red, "Banda 2": green, "Banda 3": nir };
+      S.bandNames = ["Banda 1", "Banda 2", "Banda 3"];
+      S.assignments = {}; S.results = {}; S.coverage = null;
+      const fi = $("fileInfo");
+      if (fi) { fi.textContent = "Imagen de demostracion  |  " + w + " x " + h + "  |  3 banda(s)"; fi.className = ""; }
+      renderBandSelects();
+      renderMeta();
+      renderBandStats();
+      switchPage("visor");
+    } catch (err) {
+      showError("No se pudo cargar la demostracion: " + (err && err.message ? err.message : String(err)));
     }
-    S.width = w; S.height = h;
-    S.bands = { "Banda 1": red, "Banda 2": green, "Banda 3": nir };
-    S.bandNames = ["Banda 1", "Banda 2", "Banda 3"];
-    S.assignments = {}; S.results = {}; S.coverage = null;
-    $("fileInfo").textContent = "Imagen de demostracion  |  " + w + " x " + h + "  |  3 banda(s)";
-    $("fileInfo").className = "";
-    renderBandSelects();
-    renderMeta();
-    renderBandStats();
-    switchPage("visor");
   }
 
   function renderBandSelects() {
     const container = $("bandSelects");
+    if (!container) return;
     container.innerHTML = "";
     const roles = [
       { key: "red", label: "Rojo (Red)" },
@@ -217,6 +243,7 @@ const app = (() => {
   function updateRGBSselects() {
     ["R", "G", "B"].forEach((ch) => {
       const sel = $("rgb" + ch);
+      if (!sel) return;
       while (sel.options.length > 0) sel.remove(0);
       S.bandNames.forEach((bn) => {
         const o = document.createElement("option");
@@ -228,6 +255,7 @@ const app = (() => {
 
   function renderMeta() {
     const t = $("metaTable");
+    if (!t) return;
     t.innerHTML = `
       <tr><td>Forma (alto x ancho)</td><td>${S.height} x ${S.width}</td></tr>
       <tr><td>Numero de bandas</td><td>${S.bandNames.length}</td></tr>
@@ -238,6 +266,7 @@ const app = (() => {
 
   function renderBandStats() {
     const box = $("bandStats");
+    if (!box) return;
     box.innerHTML = "";
     S.bandNames.forEach((bn) => {
       const st = stats(S.bands[bn]);
@@ -260,9 +289,12 @@ const app = (() => {
   }
 
   function drawRGB() {
-    const rName = $("rgbR").value, gName = $("rgbG").value, bName = $("rgbB").value;
+    const rSel = $("rgbR"), gSel = $("rgbG"), bSel = $("rgbB");
+    if (!rSel || !gSel || !bSel) return;
+    const rName = rSel.value, gName = gSel.value, bName = bSel.value;
     if (!rName || !gName || !bName) {
-      $("viewer").innerHTML = "Selecciona las tres bandas RGB.";
+      const cv = $("viewer");
+      if (cv) cv.innerHTML = "Selecciona las tres bandas RGB.";
       return;
     }
     const r = normalizeDisplay(S.bands[rName]);
@@ -270,6 +302,7 @@ const app = (() => {
     const b = normalizeDisplay(S.bands[bName]);
     const w = S.width, h = S.height;
     const canvas = $("viewer");
+    if (!canvas) return;
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext("2d");
     const imgd = ctx.createImageData(w, h);
@@ -291,43 +324,48 @@ const app = (() => {
   }
 
   function calcIndex(kind) {
-    const need = {
-      NDVI: ["nir", "red"], SAVI: ["nir", "red"], EVI: ["nir", "red", "blue"],
-      NDWI: ["green", "nir"], MNDWI: ["green", "swir"], NDBI: ["swir", "nir"],
-    }[kind];
-    const falta = need.filter((r) => !getBand(r));
-    if (falta.length) {
-      alert("Falta asignar la(s) banda(s): " + falta.join(", "));
-      return;
+    try {
+      const need = {
+        NDVI: ["nir", "red"], SAVI: ["nir", "red"], EVI: ["nir", "red", "blue"],
+        NDWI: ["green", "nir"], MNDWI: ["green", "swir"], NDBI: ["swir", "nir"],
+      }[kind];
+      const falta = need.filter((r) => !getBand(r));
+      if (falta.length) {
+        alert("Falta asignar la(s) banda(s): " + falta.join(", "));
+        return;
+      }
+      const red = getBand("red"), green = getBand("green"), nir = getBand("nir"), swir = getBand("swir"), blue = getBand("blue");
+      let arr;
+      switch (kind) {
+        case "NDVI": arr = (() => { const out = new Float32Array(nir.length); for (let i = 0; i < nir.length; i++) { const d = nir[i] + red[i]; out[i] = Math.abs(d) > 1e-12 ? (nir[i] - red[i]) / d : NaN; } return out; })(); break;
+        case "SAVI": arr = (() => { const L = 0.5; const out = new Float32Array(nir.length); for (let i = 0; i < nir.length; i++) { const d = nir[i] + red[i] + L; out[i] = Math.abs(d) > 1e-12 ? ((nir[i] - red[i]) / d) * (1 + L) : NaN; } return out; })(); break;
+        case "EVI": arr = (() => { const G = 2.5, C1 = 6, C2 = 7.5, L = 1; const out = new Float32Array(nir.length); for (let i = 0; i < nir.length; i++) { const den = nir[i] + C1 * red[i] - C2 * blue[i] + L; out[i] = Math.abs(den) > 1e-12 ? G * (nir[i] - red[i]) / den : NaN; } return out; })(); break;
+        case "NDWI": arr = (() => { const out = new Float32Array(green.length); for (let i = 0; i < green.length; i++) { const d = green[i] + nir[i]; out[i] = Math.abs(d) > 1e-12 ? (green[i] - nir[i]) / d : NaN; } return out; })(); break;
+        case "MNDWI": arr = (() => { const out = new Float32Array(green.length); for (let i = 0; i < green.length; i++) { const d = green[i] + swir[i]; out[i] = Math.abs(d) > 1e-12 ? (green[i] - swir[i]) / d : NaN; } return out; })(); break;
+        case "NDBI": arr = (() => { const out = new Float32Array(swir.length); for (let i = 0; i < swir.length; i++) { const d = swir[i] + nir[i]; out[i] = Math.abs(d) > 1e-12 ? (swir[i] - nir[i]) / d : NaN; } return out; })(); break;
+        default: throw new Error("Indice no soportado: " + kind);
+      }
+      const st = stats(arr);
+      let classes;
+      const title = {
+        NDVI: "Vegetacion (NDVI)", SAVI: "Vegetacion (SAVI)", EVI: "Vegetacion (EVI)",
+        NDWI: "Fuentes hidricas (NDWI)", MNDWI: "Fuentes hidricas (MNDWI)", NDBI: "Suelos / construido (NDBI)",
+      }[kind];
+      if (kind === "NDVI" || kind === "SAVI" || kind === "EVI") classes = classifyNDVI(arr);
+      else if (kind === "NDWI" || kind === "MNDWI") classes = classifyNDWI(arr);
+      else classes = classifyNDBI(arr);
+      S.results[kind] = { array: arr, stats: st, classes, title };
+      refreshIndexSelect();
+      $("indexSelect").value = kind;
+      showIndex(kind);
+    } catch (err) {
+      showError("No se pudo calcular " + kind + ": " + (err && err.message ? err.message : String(err)));
     }
-    const red = getBand("red"), green = getBand("green"), nir = getBand("nir"), swir = getBand("swir"), blue = getBand("blue");
-    let arr;
-    switch (kind) {
-      case "NDVI": arr = (() => { const out = new Float32Array(nir.length); for (let i = 0; i < nir.length; i++) { const d = nir[i] + red[i]; out[i] = Math.abs(d) > 1e-12 ? (nir[i] - red[i]) / d : NaN; } return out; })(); break;
-      case "SAVI": arr = (() => { const L = 0.5; const out = new Float32Array(nir.length); for (let i = 0; i < nir.length; i++) { const d = nir[i] + red[i] + L; out[i] = Math.abs(d) > 1e-12 ? ((nir[i] - red[i]) / d) * (1 + L) : NaN; } return out; })(); break;
-      case "EVI": arr = (() => { const G = 2.5, C1 = 6, C2 = 7.5, L = 1; const out = new Float32Array(nir.length); for (let i = 0; i < nir.length; i++) { const den = nir[i] + C1 * red[i] - C2 * blue[i] + L; out[i] = Math.abs(den) > 1e-12 ? G * (nir[i] - red[i]) / den : NaN; } return out; })(); break;
-      case "NDWI": arr = (() => { const out = new Float32Array(green.length); for (let i = 0; i < green.length; i++) { const d = green[i] + nir[i]; out[i] = Math.abs(d) > 1e-12 ? (green[i] - nir[i]) / d : NaN; } return out; })(); break;
-      case "MNDWI": arr = (() => { const out = new Float32Array(green.length); for (let i = 0; i < green.length; i++) { const d = green[i] + swir[i]; out[i] = Math.abs(d) > 1e-12 ? (green[i] - swir[i]) / d : NaN; } return out; })(); break;
-      case "NDBI": arr = (() => { const out = new Float32Array(swir.length); for (let i = 0; i < swir.length; i++) { const d = swir[i] + nir[i]; out[i] = Math.abs(d) > 1e-12 ? (swir[i] - nir[i]) / d : NaN; } return out; })(); break;
-    }
-    const st = stats(arr);
-    let classes;
-    const title = {
-      NDVI: "Vegetacion (NDVI)", SAVI: "Vegetacion (SAVI)", EVI: "Vegetacion (EVI)",
-      NDWI: "Fuentes hidricas (NDWI)", MNDWI: "Fuentes hidricas (MNDWI)", NDBI: "Suelos / construido (NDBI)",
-    }[kind];
-    if (kind === "NDVI" || kind === "SAVI" || kind === "EVI") classes = classifyNDVI(arr);
-    else if (kind === "NDWI" || kind === "MNDWI") classes = classifyNDWI(arr);
-    else classes = classifyNDBI(arr);
-    S.results[kind] = { array: arr, stats: st, classes, title };
-    refreshIndexSelect();
-    $("indexSelect").value = kind;
-    showIndex(kind);
-    alert(kind + " calculado correctamente.");
   }
 
   function refreshIndexSelect() {
     const sel = $("indexSelect");
+    if (!sel) return;
     const cur = sel.value;
     while (sel.options.length > 0) sel.remove(0);
     Object.keys(S.results).forEach((k) => {
@@ -339,40 +377,52 @@ const app = (() => {
   }
 
   function showIndex(kind) {
-    const res = S.results[kind];
-    if (!res) return;
-    const vmin = -1, vmax = 1;
-    const cmap = kind === "NDBI" ? "YlOrBr" : (kind === "NDWI" || kind === "MNDWI") ? "Blues" : "RdYlGn";
-    drawArrayToCanvas($("indexCanvas"), res.array, cmap, vmin, vmax);
-    $("rangeVal").textContent = vmin + " a " + vmax;
-    const st = res.stats;
-    $("indexStats").innerHTML = `
-      <div><strong>Pixeles validos:</strong> ${st.count.toLocaleString()}</div>
-      <div><strong>Medio:</strong> ${st.mean.toFixed(3)}</div>
-      <div><strong>Min:</strong> ${st.min.toFixed(3)}</div>
-      <div><strong>Max:</strong> ${st.max.toFixed(3)}</div>
-      <div><strong>Desv. est.:</strong> ${st.std.toFixed(3)}</div>
-      <div><strong>Mediana:</strong> ${st.median.toFixed(3)}</div>
-    `;
-    drawHist(res.array, kind);
-    renderClassesTable(kind, res.classes, st.count);
+    try {
+      const res = S.results[kind];
+      if (!res) return;
+      const vmin = -1, vmax = 1;
+      const cmap = kind === "NDBI" ? "YlOrBr" : (kind === "NDWI" || kind === "MNDWI") ? "Blues" : "RdYlGn";
+      drawArrayToCanvas($("indexCanvas"), res.array, cmap, vmin, vmax);
+      const rv = $("rangeVal");
+      if (rv) rv.textContent = vmin + " a " + vmax;
+      const st = res.stats;
+      const isEl = $("indexStats");
+      if (isEl) isEl.innerHTML = `
+        <div><strong>Pixeles validos:</strong> ${st.count.toLocaleString()}</div>
+        <div><strong>Medio:</strong> ${st.mean.toFixed(3)}</div>
+        <div><strong>Min:</strong> ${st.min.toFixed(3)}</div>
+        <div><strong>Max:</strong> ${st.max.toFixed(3)}</div>
+        <div><strong>Desv. est.:</strong> ${st.std.toFixed(3)}</div>
+        <div><strong>Mediana:</strong> ${st.median.toFixed(3)}</div>
+      `;
+      drawHist(res.array, kind);
+      renderClassesTable(kind, res.classes, st.count);
+    } catch (err) {
+      showError("No se pudo mostrar el indice: " + (err && err.message ? err.message : String(err)));
+    }
   }
 
   function drawHist(arr, name) {
-    const finite = [];
-    for (let i = 0; i < arr.length; i++) { const v = arr[i]; if (isFinite(v)) finite.push(v); }
-    const counts = new Array(40).fill(0);
-    const min = -1, max = 1, rng = max - min;
-    finite.forEach((v) => { const bi = Math.min(39, Math.floor(((v - min) / rng) * 40)); counts[bi]++; });
-    const maxc = Math.max(...counts);
-    const labels = counts.map((_, i) => (min + (i + 0.5) * rng / 40).toFixed(2));
-    const ctx = $("indexHist").getContext("2d");
-    if (S.histChart) S.histChart.destroy();
-    S.histChart = new Chart(ctx, {
-      type: "bar",
-      data: { labels, datasets: [{ label: name, data: counts, backgroundColor: "#4a90e2" }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: maxc, ticks: { stepSize: Math.ceil(maxc / 5) } } } },
-    });
+    try {
+      const finite = [];
+      for (let i = 0; i < arr.length; i++) { const v = arr[i]; if (isFinite(v)) finite.push(v); }
+      const counts = new Array(40).fill(0);
+      const min = -1, max = 1, rng = max - min;
+      finite.forEach((v) => { const bi = Math.min(39, Math.floor(((v - min) / rng) * 40)); counts[bi]++; });
+      const maxc = Math.max(...counts);
+      const labels = counts.map((_, i) => (min + (i + 0.5) * rng / 40).toFixed(2));
+      const cv = $("indexHist");
+      if (!cv) return;
+      const ctx = cv.getContext("2d");
+      if (S.histChart) S.histChart.destroy();
+      S.histChart = new Chart(ctx, {
+        type: "bar",
+        data: { labels, datasets: [{ label: name, data: counts, backgroundColor: "#4a90e2" }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: maxc, ticks: { stepSize: Math.ceil(maxc / 5) } } } },
+      });
+    } catch (err) {
+      console.error("Error en histograma:", err);
+    }
   }
 
   // ---------- clasificaciones ----------
@@ -426,289 +476,316 @@ const app = (() => {
   }
 
   function updateResolution() {
-    const v = parseFloat($("resInput").value);
-    S.resolutionM = isNaN(v) || v <= 0 ? null : v;
-    const note = $("haNote");
-    note.textContent = S.resolutionM ? `Cada pixel representa ${((S.resolutionM ** 2) / 10000).toFixed(4)} ha.` : "Resolucion no definida: solo pixeles y porcentajes.";
-    renderMeta();
+    try {
+      const v = parseFloat($("resInput").value);
+      S.resolutionM = isNaN(v) || v <= 0 ? null : v;
+      const note = $("haNote");
+      if (note) note.textContent = S.resolutionM ? `Cada pixel representa ${((S.resolutionM ** 2) / 10000).toFixed(4)} ha.` : "Resolucion no definida: solo pixeles y porcentajes.";
+      renderMeta();
+      if (S.coverage) renderCoverage();
+    } catch (err) {
+      console.error("Error actualizando resolucion:", err);
+    }
   }
 
   // ---------- cobertura combinada ----------
   function buildCoverage() {
-    const ndvi = S.results.NDVI ? S.results.NDVI.array : null;
-    const ndwiKey = S.results.MNDWI ? "MNDWI" : (S.results.NDWI ? "NDWI" : null);
-    const ndwi = ndwiKey ? S.results[ndwiKey].array : null;
-    const ndbi = S.results.NDBI ? S.results.NDBI.array : null;
-    if (!ndvi || (!ndwi && !ndbi)) {
-      $("areaCover").innerHTML = "Calcula NDVI y (NDWI/MNDWI o NDBI) para ver la cobertura combinada.";
-      return;
+    try {
+      const ndvi = S.results.NDVI ? S.results.NDVI.array : null;
+      const ndwiKey = S.results.MNDWI ? "MNDWI" : (S.results.NDWI ? "NDWI" : null);
+      const ndwi = ndwiKey ? S.results[ndwiKey].array : null;
+      const ndbi = S.results.NDBI ? S.results.NDBI.array : null;
+      if (!ndvi || (!ndwi && !ndbi)) {
+        $("areaCover").innerHTML = "Calcula NDVI y (NDWI/MNDWI o NDBI) para ver la cobertura combinada.";
+        return;
+      }
+      const n = ndvi.length;
+      const cov = new Int8Array(n);
+      for (let i = 0; i < n; i++) {
+        const v = ndvi[i], w = ndwi ? ndwi[i] : NaN, b = ndbi ? ndbi[i] : NaN;
+        const agua = isFinite(w) && w > 0.10;
+        const veget = isFinite(v) && v > 0.25 && !agua;
+        const suelo = isFinite(b) && b > 0.10 && !agua && !veget;
+        if (agua) cov[i] = 1;
+        else if (veget) cov[i] = 2;
+        else if (suelo) cov[i] = 3;
+        else cov[i] = 0;
+      }
+      S.coverage = cov;
+      renderCoverage();
+    } catch (err) {
+      showError("No se pudo construir la cobertura: " + (err && err.message ? err.message : String(err)));
     }
-    const n = ndvi.length;
-    const cov = new Int8Array(n); // 0 otro, 1 agua, 2 vegetacion, 3 suelo
-    for (let i = 0; i < n; i++) {
-      const v = ndvi[i], w = ndwi ? ndwi[i] : NaN, b = ndbi ? ndbi[i] : NaN;
-      const agua = isFinite(w) && w > 0.10;
-      const veget = isFinite(v) && v > 0.25 && !agua;
-      const suelo = isFinite(b) && b > 0.10 && !agua && !veget;
-      if (agua) cov[i] = 1;
-      else if (veget) cov[i] = 2;
-      else if (suelo) cov[i] = 3;
-      else cov[i] = 0;
-    }
-    S.coverage = cov;
-    renderCoverage();
   }
 
   function renderCoverage() {
-    const cov = S.coverage;
-    const total = cov.length;
-    const c1 = cov.filter((x) => x === 1).length;
-    const c2 = cov.filter((x) => x === 2).length;
-    const c3 = cov.filter((x) => x === 3).length;
-    const ha = (r) => S.resolutionM ? (r * S.resolutionM ** 2 / 10000).toFixed(2) : "-";
-    $("areaCover").innerHTML = `
-      <table style='width:100%;border-collapse:collapse;font-size:.82rem;margin-bottom:.5rem'>
-        <tr><th style='text-align:left'>Cobertura</th><th style='text-align:right'>Pixeles</th><th style='text-align:right'>% Area</th><th style='text-align:right'>Area (ha)</th></tr>
-        <tr><td>Agua</td><td style='text-align:right'>${c1.toLocaleString()}</td><td style='text-align:right'>${(c1 / total * 100).toFixed(2)}%</td><td style='text-align:right'>${ha(c1)}</td></tr>
-        <tr><td>Vegetacion</td><td style='text-align:right'>${c2.toLocaleString()}</td><td style='text-align:right'>${(c2 / total * 100).toFixed(2)}%</td><td style='text-align:right'>${ha(c2)}</td></tr>
-        <tr><td>Suelo expuesto / construido</td><td style='text-align:right'>${c3.toLocaleString()}</td><td style='text-align:right'>${(c3 / total * 100).toFixed(2)}%</td><td style='text-align:right'>${ha(c3)}</td></tr>
-      </table>`;
-    const canvas = $("coverCanvas");
-    canvas.width = S.width; canvas.height = S.height;
-    const ctx = canvas.getContext("2d");
-    const imgd = ctx.createImageData(S.width, S.height);
-    const d = imgd.data;
-    const colors = { 0: [210, 210, 210, 0], 1: [74, 144, 226, 255], 2: [126, 211, 33, 255], 3: [224, 161, 59, 255] };
-    for (let i = 0; i < cov.length; i++) {
-      const base = i * 4;
-      const c = colors[cov[i]];
-      d[base] = c[0]; d[base+1] = c[1]; d[base+2] = c[2]; d[base+3] = c[3];
+    try {
+      const cov = S.coverage;
+      const total = cov.length;
+      const c1 = cov.filter((x) => x === 1).length;
+      const c2 = cov.filter((x) => x === 2).length;
+      const c3 = cov.filter((x) => x === 3).length;
+      const ha = (r) => S.resolutionM ? (r * S.resolutionM ** 2 / 10000).toFixed(2) : "-";
+      $("areaCover").innerHTML = `
+        <table style='width:100%;border-collapse:collapse;font-size:.82rem;margin-bottom:.5rem'>
+          <tr><th style='text-align:left'>Cobertura</th><th style='text-align:right'>Pixeles</th><th style='text-align:right'>% Area</th><th style='text-align:right'>Area (ha)</th></tr>
+          <tr><td>Agua</td><td style='text-align:right'>${c1.toLocaleString()}</td><td style='text-align:right'>${(c1 / total * 100).toFixed(2)}%</td><td style='text-align:right'>${ha(c1)}</td></tr>
+          <tr><td>Vegetacion</td><td style='text-align:right'>${c2.toLocaleString()}</td><td style='text-align:right'>${(c2 / total * 100).toFixed(2)}%</td><td style='text-align:right'>${ha(c2)}</td></tr>
+          <tr><td>Suelo expuesto / construido</td><td style='text-align:right'>${c3.toLocaleString()}</td><td style='text-align:right'>${(c3 / total * 100).toFixed(2)}%</td><td style='text-align:right'>${ha(c3)}</td></tr>
+        </table>`;
+      const canvas = $("coverCanvas");
+      canvas.width = S.width; canvas.height = S.height;
+      const ctx = canvas.getContext("2d");
+      const imgd = ctx.createImageData(S.width, S.height);
+      const d = imgd.data;
+      const colors = { 0: [210, 210, 210, 0], 1: [74, 144, 226, 255], 2: [126, 211, 33, 255], 3: [224, 161, 59, 255] };
+      for (let i = 0; i < cov.length; i++) {
+        const base = i * 4;
+        const c = colors[cov[i]];
+        d[base] = c[0]; d[base+1] = c[1]; d[base+2] = c[2]; d[base+3] = c[3];
+      }
+      ctx.putImageData(imgd, 0, 0);
+    } catch (err) {
+      showError("No se pudo renderizar la cobertura: " + (err && err.message ? err.message : String(err)));
     }
-    ctx.putImageData(imgd, 0, 0);
   }
 
   // ---------- navegacion ----------
   function switchPage(id) {
-    document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
-    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-    $(id).classList.add("active");
-    $(`[data-tab="${id}"]`).classList.add("active");
+    try {
+      document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+      $(id).classList.add("active");
+      $(`[data-tab="${id}"]`).classList.add("active");
+    } catch (err) {
+      console.error("Error cambiando pestaña:", err);
+    }
   }
 
   // ---------- CSV ----------
   function downloadCSV() {
-    if (!Object.keys(S.results).length) { alert("No hay resultados para exportar."); return; }
-    let csv = "indice,min,max,medio,desvio,mediana,pixeles_validos\n";
-    Object.entries(S.results).forEach(([k, r]) => {
-      const s = r.stats;
-      csv += `${k},${s.min.toFixed(4)},${s.max.toFixed(4)},${s.mean.toFixed(4)},${s.std.toFixed(4)},${s.median.toFixed(4)},${s.count}\n`;
-    });
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "indices_espectrales.csv"; a.click();
-    URL.revokeObjectURL(url);
+    try {
+      if (!Object.keys(S.results).length) { alert("No hay resultados para exportar."); return; }
+      let csv = "indice,min,max,medio,desvio,mediana,pixeles_validos\n";
+      Object.entries(S.results).forEach(([k, r]) => {
+        const s = r.stats;
+        csv += `${k},${s.min.toFixed(4)},${s.max.toFixed(4)},${s.mean.toFixed(4)},${s.std.toFixed(4)},${s.median.toFixed(4)},${s.count}\n`;
+      });
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "indices_espectrales.csv"; a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showError("No se pudo descargar el CSV: " + (err && err.message ? err.message : String(err)));
+    }
   }
 
   // ---------- PDF ----------
   async function generatePDF() {
-    const { jsPDF } = window.jspdf;
-    if (!jsPDF) { alert("jsPDF no cargo."); return; }
-    if (!Object.keys(S.results).length) { alert("No hay resultados para incluir en el reporte."); return; }
+    try {
+      const { jsPDF } = window.jspdf || {};
+      if (!jsPDF) { showError("jsPDF no cargo. Verifica tu conexion a internet."); return; }
+      if (!Object.keys(S.results).length) { alert("No hay resultados para incluir en el reporte."); return; }
 
-    const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
-    const now = new Date().toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" });
-    const fileName = $("fileInput").files[0] ? $("fileInput").files[0].name : "demostracion.tif";
+      const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+      const now = new Date().toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" });
+      const fileName = $("fileInput").files[0] ? $("fileInput").files[0].name : "demostracion.tif";
 
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(27, 122, 69);
-    pdf.fontSize(16);
-    pdf.text("Informe de Analisis de Imagen TIFF", 20, 20);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(100, 100, 100);
-    pdf.fontSize(10);
-    pdf.text("Fecha de generacion: " + now, 20, 30);
-    pdf.text("Archivo analizado: " + escapeHtml(fileName), 20, 38);
-    pdf.text("Dimensiones: " + S.height + " x " + S.width + " pixeles", 20, 46);
-    pdf.text("Resolucion espacial: " + (S.resolutionM ? S.resolutionM + " m/pixel" : "no especificada"), 20, 54);
-
-    // resumen ejecutivo
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(27, 122, 69);
-    pdf.fontSize(12);
-    pdf.text("Resumen ejecutivo", 20, 68);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(60, 60, 60);
-    pdf.fontSize(9.5);
-    const resumen = $("repResumen").value.split("\n");
-    let y = 76;
-    resumen.forEach((line) => { pdf.text(escapeHtml(line), 20, y); y += 6; });
-
-    // tabla de indices
-    y += 6;
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(27, 122, 69);
-    pdf.fontSize(11);
-    pdf.text("Indices espectrales calculados", 20, y);
-    y += 6;
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(60, 60, 60);
-    pdf.fontSize(8.5);
-    const headers = ["Indice", "Min", "Max", "Medio", "Desv.", "Estado general"];
-    const colX = [20, 55, 80, 105, 130, 155];
-    pdf.setFillColor(27, 122, 69);
-    pdf.setTextColor(255, 255, 255);
-    headers.forEach((h, i) => pdf.text(h, colX[i], y));
-    pdf.setTextColor(60, 60, 60);
-    y += 5;
-    Object.entries(S.results).forEach(([k, r]) => {
-      const s = r.stats;
-      let estado = "";
-      if (["NDVI", "SAVI", "EVI"].includes(k)) estado = s.mean > 0.3 ? "Vegetacion destacada" : "Vegetacion limitada";
-      else if (["NDWI", "MNDWI"].includes(k)) estado = s.mean > 0.1 ? "Agua significativa" : "Poca agua detectada";
-      else if (k === "NDBI") estado = s.mean > 0.05 ? "Suelos expuestos notables" : "Baja exposicion de suelo";
-      const row = [k, s.min.toFixed(3), s.max.toFixed(3), s.mean.toFixed(3), s.std.toFixed(3), estado];
-      row.forEach((v, i) => pdf.text(v, colX[i], y));
-      y += 5;
-    });
-
-    // secciones por indice
-    for (const kind of ["NDVI", "NDWI", "MNDWI", "NDBI", "SAVI", "EVI"]) {
-      const res = S.results[kind];
-      if (!res) continue;
-      pdf.addPage();
       pdf.setFont("helvetica", "bold");
       pdf.setTextColor(27, 122, 69);
-      pdf.fontSize(12.5);
-      pdf.text(res.title, 20, 20);
-      // mapa como imagen
-      const cmap = kind === "NDBI" ? "YlOrBr" : (kind === "NDWI" || kind === "MNDWI") ? "Blues" : "RdYlGn";
-      drawArrayToCanvas($("indexCanvas"), res.array, cmap, -1, 1);
-      const mapImg = $("indexCanvas").toDataURL("image/png");
-      pdf.addImage(mapImg, "PNG", 20, 28, 90, 45);
-      // histograma
-      drawHist(res.array, kind);
-      const histImg = $("indexHist").toDataURL("image/png");
-      pdf.addImage(histImg, "PNG", 115, 28, 75, 32);
-      const s = res.stats;
-      y = 80;
+      pdf.fontSize(16);
+      pdf.text("Informe de Analisis de Imagen TIFF", 20, 20);
       pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(60, 60, 60);
-      pdf.fontSize(9);
-      pdf.text(`Validos: ${s.count.toLocaleString()} pixeles | Medio: ${s.mean.toFixed(3)} | Min: ${s.min.toFixed(3)} | Max: ${s.max.toFixed(3)} | Desv.: ${s.std.toFixed(3)} | Mediana: ${s.median.toFixed(3)}`, 20, y);
-      y += 7;
-      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(100, 100, 100);
       pdf.fontSize(10);
-      pdf.text("Distribucion por clases", 20, y);
-      y += 5;
-      pdf.setFont("helvetica", "normal");
-      pdf.fontSize(8.5);
-      const cheaders = ["Clase", "Rango", "Pixeles", "% Area"];
-      const ccolX = [20, 65, 115, 150];
-      pdf.setFillColor(27, 122, 69);
-      pdf.setTextColor(255, 255, 255);
-      cheaders.forEach((h, i) => pdf.text(h, ccolX[i], y));
-      pdf.setTextColor(60, 60, 60);
-      y += 4.5;
-      res.classes.forEach((c) => {
-        pdf.text(escapeHtml(c.clase), ccolX[0], y);
-        pdf.text(escapeHtml(c.rango), ccolX[1], y);
-        pdf.text(c.pixeles.toLocaleString(), ccolX[2], y);
-        pdf.text(c.porcentaje.toFixed(2) + "%", ccolX[3], y);
-        y += 4.5;
-      });
-      y += 3;
-      pdf.setFont("helvetica", "italic");
-      pdf.fontSize(9);
-      pdf.text("Interpretacion: valores mas altos indican mayor presencia del fenomeno asociado al indice.", 20, y);
-    }
+      pdf.text("Fecha de generacion: " + now, 20, 30);
+      pdf.text("Archivo analizado: " + escapeHtml(fileName), 20, 38);
+      pdf.text("Dimensiones: " + S.height + " x " + S.width + " pixeles", 20, 46);
+      pdf.text("Resolucion espacial: " + (S.resolutionM ? S.resolutionM + " m/pixel" : "no especificada"), 20, 54);
 
-    // cobertura combinada
-    if (S.coverage) {
-      pdf.addPage();
       pdf.setFont("helvetica", "bold");
       pdf.setTextColor(27, 122, 69);
-      pdf.fontSize(12.5);
-      pdf.text("Clasificacion de cobertura del terreno", 20, 20);
-      renderCoverage();
-      const covImg = $("coverCanvas").toDataURL("image/png");
-      pdf.addImage(covImg, "PNG", 20, 28, 90, 40);
-      const total = S.coverage.length;
-      const c1 = S.coverage.filter((x) => x === 1).length;
-      const c2 = S.coverage.filter((x) => x === 2).length;
-      const c3 = S.coverage.filter((x) => x === 3).length;
-      y = 78;
+      pdf.fontSize(12);
+      pdf.text("Resumen ejecutivo", 20, 68);
       pdf.setFont("helvetica", "normal");
       pdf.setTextColor(60, 60, 60);
       pdf.fontSize(9.5);
-      pdf.text(`Agua: ${c1.toLocaleString()} pixeles (${(c1 / total * 100).toFixed(2)}% del area)`, 20, y); y += 6;
-      pdf.text(`Vegetacion: ${c2.toLocaleString()} pixeles (${(c2 / total * 100).toFixed(2)}% del area)`, 20, y); y += 6;
-      pdf.text(`Suelo expuesto / construido: ${c3.toLocaleString()} pixeles (${(c3 / total * 100).toFixed(2)}% del area)`, 20, y); y += 6;
-      if (S.resolutionM) {
-        const ha = (r) => (r * S.resolutionM ** 2 / 10000).toFixed(2);
-        pdf.text("Areas aproximadas (resolucion " + S.resolutionM + " m/pixel):", 20, y); y += 6;
-        pdf.text(`Agua: ${ha(c1)} ha`, 20, y); y += 5;
-        pdf.text(`Vegetacion: ${ha(c2)} ha`, 20, y); y += 5;
-        pdf.text(`Suelo expuesto / construido: ${ha(c3)} ha`, 20, y);
+      const resumen = $("repResumen").value.split("\n");
+      let y = 76;
+      resumen.forEach((line) => { pdf.text(escapeHtml(line), 20, y); y += 6; });
+
+      y += 6;
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(27, 122, 69);
+      pdf.fontSize(11);
+      pdf.text("Indices espectrales calculados", 20, y);
+      y += 6;
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(60, 60, 60);
+      pdf.fontSize(8.5);
+      const headers = ["Indice", "Min", "Max", "Medio", "Desv.", "Estado general"];
+      const colX = [20, 55, 80, 105, 130, 155];
+      pdf.setFillColor(27, 122, 69);
+      pdf.setTextColor(255, 255, 255);
+      headers.forEach((h, i) => pdf.text(h, colX[i], y));
+      pdf.setTextColor(60, 60, 60);
+      y += 5;
+      Object.entries(S.results).forEach(([k, r]) => {
+        const s = r.stats;
+        let estado = "";
+        if (["NDVI", "SAVI", "EVI"].includes(k)) estado = s.mean > 0.3 ? "Vegetacion destacada" : "Vegetacion limitada";
+        else if (["NDWI", "MNDWI"].includes(k)) estado = s.mean > 0.1 ? "Agua significativa" : "Poca agua detectada";
+        else if (k === "NDBI") estado = s.mean > 0.05 ? "Suelos expuestos notables" : "Baja exposicion de suelo";
+        const row = [k, s.min.toFixed(3), s.max.toFixed(3), s.mean.toFixed(3), s.std.toFixed(3), estado];
+        row.forEach((v, i) => pdf.text(v, colX[i], y));
+        y += 5;
+      });
+
+      for (const kind of ["NDVI", "NDWI", "MNDWI", "NDBI", "SAVI", "EVI"]) {
+        const res = S.results[kind];
+        if (!res) continue;
+        pdf.addPage();
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(27, 122, 69);
+        pdf.fontSize(12.5);
+        pdf.text(res.title, 20, 20);
+        const cmap = kind === "NDBI" ? "YlOrBr" : (kind === "NDWI" || kind === "MNDWI") ? "Blues" : "RdYlGn";
+        drawArrayToCanvas($("indexCanvas"), res.array, cmap, -1, 1);
+        const mapImg = $("indexCanvas").toDataURL("image/png");
+        pdf.addImage(mapImg, "PNG", 20, 28, 90, 45);
+        drawHist(res.array, kind);
+        const histImg = $("indexHist").toDataURL("image/png");
+        pdf.addImage(histImg, "PNG", 115, 28, 75, 32);
+        const s = res.stats;
+        y = 80;
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(60, 60, 60);
+        pdf.fontSize(9);
+        pdf.text(`Validos: ${s.count.toLocaleString()} pixeles | Medio: ${s.mean.toFixed(3)} | Min: ${s.min.toFixed(3)} | Max: ${s.max.toFixed(3)} | Desv.: ${s.std.toFixed(3)} | Mediana: ${s.median.toFixed(3)}`, 20, y);
+        y += 7;
+        pdf.setFont("helvetica", "bold");
+        pdf.fontSize(10);
+        pdf.text("Distribucion por clases", 20, y);
+        y += 5;
+        pdf.setFont("helvetica", "normal");
+        pdf.fontSize(8.5);
+        const cheaders = ["Clase", "Rango", "Pixeles", "% Area"];
+        const ccolX = [20, 65, 115, 150];
+        pdf.setFillColor(27, 122, 69);
+        pdf.setTextColor(255, 255, 255);
+        cheaders.forEach((h, i) => pdf.text(h, ccolX[i], y));
+        pdf.setTextColor(60, 60, 60);
+        y += 4.5;
+        res.classes.forEach((c) => {
+          pdf.text(escapeHtml(c.clase), ccolX[0], y);
+          pdf.text(escapeHtml(c.rango), ccolX[1], y);
+          pdf.text(c.pixeles.toLocaleString(), ccolX[2], y);
+          pdf.text(c.porcentaje.toFixed(2) + "%", ccolX[3], y);
+          y += 4.5;
+        });
+        y += 3;
+        pdf.setFont("helvetica", "italic");
+        pdf.fontSize(9);
+        pdf.text("Interpretacion: valores mas altos indican mayor presencia del fenomeno asociado al indice.", 20, y);
       }
+
+      if (S.coverage) {
+        pdf.addPage();
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(27, 122, 69);
+        pdf.fontSize(12.5);
+        pdf.text("Clasificacion de cobertura del terreno", 20, 20);
+        renderCoverage();
+        const covImg = $("coverCanvas").toDataURL("image/png");
+        pdf.addImage(covImg, "PNG", 20, 28, 90, 40);
+        const total = S.coverage.length;
+        const c1 = S.coverage.filter((x) => x === 1).length;
+        const c2 = S.coverage.filter((x) => x === 2).length;
+        const c3 = S.coverage.filter((x) => x === 3).length;
+        y = 78;
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(60, 60, 60);
+        pdf.fontSize(9.5);
+        pdf.text(`Agua: ${c1.toLocaleString()} pixeles (${(c1 / total * 100).toFixed(2)}% del area)`, 20, y); y += 6;
+        pdf.text(`Vegetacion: ${c2.toLocaleString()} pixeles (${(c2 / total * 100).toFixed(2)}% del area)`, 20, y); y += 6;
+        pdf.text(`Suelo expuesto / construido: ${c3.toLocaleString()} pixeles (${(c3 / total * 100).toFixed(2)}% del area)`, 20, y); y += 6;
+        if (S.resolutionM) {
+          const ha = (r) => (r * S.resolutionM ** 2 / 10000).toFixed(2);
+          pdf.text("Areas aproximadas (resolucion " + S.resolutionM + " m/pixel):", 20, y); y += 6;
+          pdf.text(`Agua: ${ha(c1)} ha`, 20, y); y += 5;
+          pdf.text(`Vegetacion: ${ha(c2)} ha`, 20, y); y += 5;
+          pdf.text(`Suelo expuesto / construido: ${ha(c3)} ha`, 20, y);
+        }
+      }
+
+      pdf.addPage();
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(27, 122, 69);
+      pdf.fontSize(12.5);
+      pdf.text("Conclusiones y recomendaciones", 20, 20);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(60, 60, 60);
+      pdf.fontSize(9.5);
+      const concl = $("repConclusiones").value.split("\n");
+      y = 30;
+      concl.forEach((line) => { pdf.text("• " + escapeHtml(line), 20, y); y += 6.5; });
+      y += 4;
+      pdf.setFont("helvetica", "italic");
+      pdf.fontSize(7.5);
+      pdf.setTextColor(140, 140, 140);
+      pdf.text("Metodologia: indices espectrales calculados a partir de bandas de reflejo satelital (NDVI, NDWI, MNDWI, NDBI, SAVI, EVI).", 20, y);
+      pdf.text("Las areas se estiman en pixeles y, si se proporciona la resolucion espacial, en hectareas.", 20, y + 5);
+      pdf.text("Los umbrales de clasificacion son referenciales y deben validarse con datos de campo.", 20, y + 10);
+
+      const blob = pdf.output("blob");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "reporte_analisis_tif.pdf";
+      a.click();
+      URL.revokeObjectURL(url);
+      $("pdfStatus").textContent = "Reporte generado y descargado.";
+    } catch (err) {
+      showError("No se pudo generar el reporte PDF: " + (err && err.message ? err.message : String(err)));
     }
-
-    // conclusiones
-    pdf.addPage();
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(27, 122, 69);
-    pdf.fontSize(12.5);
-    pdf.text("Conclusiones y recomendaciones", 20, 20);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(60, 60, 60);
-    pdf.fontSize(9.5);
-    const concl = $("repConclusiones").value.split("\n");
-    y = 30;
-    concl.forEach((line) => { pdf.text("• " + escapeHtml(line), 20, y); y += 6.5; });
-    y += 4;
-    pdf.setFont("helvetica", "italic");
-    pdf.fontSize(7.5);
-    pdf.setTextColor(140, 140, 140);
-    pdf.text("Metodologia: indices espectrales calculados a partir de bandas de reflejo satelital (NDVI, NDWI, MNDWI, NDBI, SAVI, EVI).", 20, y);
-    pdf.text("Las areas se estiman en pixeles y, si se proporciona la resolucion espacial, en hectareas.", 20, y + 5);
-    pdf.text("Los umbrales de clasificacion son referenciales y deben validarse con datos de campo.", 20, y + 10);
-
-    const blob = pdf.output("blob");
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "reporte_analisis_tif.pdf";
-    a.click();
-    URL.revokeObjectURL(url);
-    $("pdfStatus").textContent = "Reporte generado y descargado.";
   }
 
   // ---------- inicializacion ----------
   function init() {
-    $("fileInput").addEventListener("change", (e) => {
-      if (e.target.files[0]) loadFile(e.target.files[0]);
-    });
-    $("btnDemo").addEventListener("click", loadDemo);
-    $("resInput").addEventListener("change", updateResolution);
-    $("resInput").addEventListener("input", updateResolution);
-    ["rgbR", "rgbG", "rgbB"].forEach((id) => $(id).addEventListener("change", drawRGB));
-    $("indexSelect").addEventListener("change", (e) => showIndex(e.target.value));
-    $("indexRange").addEventListener("input", (e) => {
-      const v = e.target.value.split(",");
-      const kind = $("indexSelect").value;
-      const res = S.results[kind];
-      if (!res) return;
-      const cmap = kind === "NDBI" ? "YlOrBr" : (kind === "NDWI" || kind === "MNDWI") ? "Blues" : "RdYlGn";
-      drawArrayToCanvas($("indexCanvas"), res.array, cmap, parseFloat(v[0]), parseFloat(v[1]));
-      $("rangeVal").textContent = v[0] + " a " + v[1];
-    });
-    $("btnDownloadCSV").addEventListener("click", downloadCSV);
-    $("btnGenPDF").addEventListener("click", generatePDF);
-    // pestañas
-    document.querySelectorAll(".tab").forEach((t) => {
-      t.addEventListener("click", () => switchPage(t.dataset.tab));
-    });
-    switchPage("visor");
+    try {
+      const fi = $("fileInput");
+      if (fi) fi.addEventListener("change", (e) => {
+        if (e.target.files[0]) loadFile(e.target.files[0]);
+      });
+      const bd = $("btnDemo");
+      if (bd) bd.addEventListener("click", loadDemo);
+      const ri = $("resInput");
+      if (ri) { ri.addEventListener("change", updateResolution); ri.addEventListener("input", updateResolution); }
+      ["rgbR", "rgbG", "rgbB"].forEach((id) => { const el = $(id); if (el) el.addEventListener("change", drawRGB); });
+      const is = $("indexSelect");
+      if (is) is.addEventListener("change", (e) => showIndex(e.target.value));
+      const ir = $("indexRange");
+      if (ir) ir.addEventListener("input", (e) => {
+        const v = e.target.value.split(",");
+        const kind = $("indexSelect").value;
+        const res = S.results[kind];
+        if (!res) return;
+        const cmap = kind === "NDBI" ? "YlOrBr" : (kind === "NDWI" || kind === "MNDWI") ? "Blues" : "RdYlGn";
+        drawArrayToCanvas($("indexCanvas"), res.array, cmap, parseFloat(v[0]), parseFloat(v[1]));
+        $("rangeVal").textContent = v[0] + " a " + v[1];
+      });
+      const dc = $("btnDownloadCSV");
+      if (dc) dc.addEventListener("click", downloadCSV);
+      const gp = $("btnGenPDF");
+      if (gp) gp.addEventListener("click", generatePDF);
+      document.querySelectorAll(".tab").forEach((t) => {
+        t.addEventListener("click", () => switchPage(t.dataset.tab));
+      });
+      switchPage("visor");
+    } catch (err) {
+      showError("Error inicializando la aplicacion: " + (err && err.message ? err.message : String(err)));
+    }
   }
 
   return {
@@ -721,5 +798,15 @@ const app = (() => {
     drawRGB,
   };
 })();
+
+// manejador global de errores no capturados
+window.addEventListener("error", (e) => {
+  console.error("Error no capturado:", e.error || e.message);
+  alert("Error en la aplicacion: " + (e.error && e.error.message ? e.error.message : e.message));
+});
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("Promesa rechazada no manejada:", e.reason);
+  alert("Error: " + (e.reason && e.reason.message ? e.reason.message : String(e.reason)));
+});
 
 window.addEventListener("DOMContentLoaded", () => app.init());
